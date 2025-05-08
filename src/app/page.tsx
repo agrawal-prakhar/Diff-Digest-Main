@@ -25,6 +25,11 @@ export default function Home() {
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [nextPage, setNextPage] = useState<number | null>(null);
   const [initialFetchDone, setInitialFetchDone] = useState<boolean>(false);
+  const [isGeneratingNotes, setIsGeneratingNotes] = useState(false);
+  const [notesByPR, setNotesByPR] = useState<
+  Record<string, { developer: string; marketing: string }>
+>({});
+ 
 
   const fetchDiffs = async (page: number) => {
     setIsLoading(true);
@@ -46,12 +51,22 @@ export default function Home() {
       }
       const data: ApiResponse = await response.json();
 
-      setDiffs((prevDiffs) =>
-        page === 1 ? data.diffs : [...prevDiffs, ...data.diffs]
-      );
+      // Ensure we don't have duplicate PRs when appending
+      setDiffs((prevDiffs) => {
+        if (page === 1) return data.diffs;
+        const existingIds = new Set(prevDiffs.map(d => d.id));
+        const newDiffs = data.diffs.filter(d => !existingIds.has(d.id));
+        return [...prevDiffs, ...newDiffs];
+      });
       setCurrentPage(data.currentPage);
       setNextPage(data.nextPage);
       if (!initialFetchDone) setInitialFetchDone(true);
+
+      // Generate notes for new PRs
+      const newPRs = page === 1 ? data.diffs : data.diffs.filter(d => !notesByPR[d.id]);
+      if (newPRs.length > 0) {
+        generateNotes(newPRs);
+      }
     } catch (err: unknown) {
       setError(
         err instanceof Error ? err.message : "An unknown error occurred"
@@ -71,6 +86,100 @@ export default function Home() {
       fetchDiffs(nextPage);
     }
   };
+
+  function mergeWithOverlap(prev: string, fragment: string) {
+    const max = Math.min(prev.length, fragment.length);
+  
+    for (let k = max; k > 0; k--) {
+      if (prev.slice(-k) === fragment.slice(0, k)) {
+        return prev + fragment.slice(k); // skip the overlap
+      }
+    }
+    return prev + fragment; // no overlap found
+  }
+  
+  const generateNotes = async (diffs: unknown[]) => {
+    // Filter out PRs that already have notes and ensure unique PRs
+    const pending = (diffs as DiffItem[])
+      .filter(d => !notesByPR[d.id])
+      .filter((d, i, arr) => arr.findIndex(item => item.id === d.id) === i);
+
+    if (!pending.length) {
+      setError("No new PRs to generate notes for");
+      return;
+    }
+
+    setIsGeneratingNotes(true);
+    setError(null);
+
+    try {
+      const response = await fetch("/api/generate-notes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ diffs: pending }),
+      });
+
+      if (!response.ok) throw new Error("Request failed");
+
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error("ReadableStream not supported");
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        // Add this chunk to our buffer and process complete SSE events
+        buffer += decoder.decode(value, { stream: true });
+
+        let dblNewline;
+        while ((dblNewline = buffer.indexOf("\n\n")) !== -1) {
+          const rawEvent = buffer.slice(0, dblNewline).trim(); // one SSE event
+          buffer = buffer.slice(dblNewline + 2);               // remainder
+
+          // We only care about "data:" lines
+          if (!rawEvent.startsWith("data:")) continue;
+
+          const json = rawEvent.slice(5).trim(); // remove "data:"
+          if (!json) continue;
+
+          let payload: { type: string; content?: string; done?: boolean };
+          try {
+            payload = JSON.parse(json);
+          } catch (e) {
+            console.error("Bad SSE JSON:", e, json);
+            continue;
+          }
+
+          const { prId, section, content = "", done: streamDone } = (payload as unknown) as {
+            prId: string;
+            section: "developer" | "marketing";
+            content?: string;
+            done?: boolean;
+          };
+          if (streamDone) continue;
+          
+          setNotesByPR(prev => {
+            const current = prev[prId] ?? { developer: "", marketing: "" };
+          
+            if (section === "developer") {
+              current.developer = mergeWithOverlap(current.developer, content);
+            } else {
+              current.marketing = mergeWithOverlap(current.marketing, content);
+            }
+            return { ...prev, [prId]: current };
+          });
+        }
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unknown error");
+    } finally {
+      setIsGeneratingNotes(false);
+    }
+  };
+
 
   return (
     <main className="flex min-h-screen flex-col items-center p-12 sm:p-24">
@@ -116,22 +225,34 @@ export default function Home() {
           {diffs.length > 0 && (
             <ul className="space-y-3 list-disc list-inside">
               {diffs.map((item) => (
-                <li key={item.id} className="text-gray-800 dark:text-gray-200">
-                  <a
-                    href={item.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-blue-600 dark:text-blue-400 hover:underline"
-                  >
-                    PR #{item.id}:
-                  </a>
-                  <span className="ml-2">{item.description}</span>
-                  {/* We won't display the full diff here, just the description */}
-                </li>
+                <li key={item.id} className="mb-6">
+                <a
+                  href={item.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-600 dark:text-blue-400 hover:underline"
+                >
+                  PR #{item.id}:
+                </a>
+                <span className="ml-2">{item.description}</span>
+              
+                {notesByPR[item.id]?.developer && (
+                  <pre className="mt-2 p-2 bg-gray-100 dark:bg-gray-900 rounded whitespace-pre-wrap">
+                    <strong>Dev&nbsp;notes:</strong> {notesByPR[item.id].developer}
+                  </pre>
+                )}
+              
+                {notesByPR[item.id]?.marketing && (
+                  <pre className="mt-2 p-2 bg-gray-50 dark:bg-gray-800 rounded whitespace-pre-wrap">
+                    <strong>Marketing:</strong> {notesByPR[item.id].marketing}
+                  </pre>
+                )}
+              </li>
               ))}
             </ul>
           )}
 
+        
           {isLoading && currentPage > 1 && (
             <p className="text-gray-600 dark:text-gray-400 mt-4">
               Loading more...
