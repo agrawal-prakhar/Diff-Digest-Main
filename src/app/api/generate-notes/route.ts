@@ -150,6 +150,7 @@ export async function POST(request: Request) {
                       role: "user",
                       content: `Here's a new pull request. Based only on the functionality changes in the diff, generate a short marketing-style release note that clearly explains the benefit to the user. Do not include anything about internal code, comments, or refactors. Focus strictly on how the product behavior or experience has improved from the user's point of view.
 
+                      Gve a very simplified, no technical terms, or filenames, or codebase related, one line explanation of what the change does for the end user.
                             Title: ${pr.description}
 
                             Diff:

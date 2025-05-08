@@ -28,7 +28,7 @@ interface ApiResponse {
 }
 
 // Custom hook for persistent state
-function usePersistentState<T>(key: string, initialValue: T): [T, (value: T) => void] {
+function usePersistentState<T>(key: string, initialValue: T): [T, (value: T | ((prev: T) => T)) => void] {
   const [state, setState] = useState<T>(() => {
     if (typeof window === 'undefined') return initialValue;
     const saved = localStorage.getItem(key);
@@ -42,6 +42,8 @@ function usePersistentState<T>(key: string, initialValue: T): [T, (value: T) => 
   return [state, setState];
 }
 
+type NotesState = Record<string, { developer: string; marketing: string; tools?: PRTools }>;
+
 export default function Home() {
   const [diffs, setDiffs] = usePersistentState<DiffItem[]>('diffs', []);
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -50,9 +52,7 @@ export default function Home() {
   const [nextPage, setNextPage] = usePersistentState<number | null>('nextPage', null);
   const [initialFetchDone, setInitialFetchDone] = usePersistentState<boolean>('initialFetchDone', false);
   const [isGeneratingNotes, setIsGeneratingNotes] = useState(false);
-  const [notesByPR, setNotesByPR] = usePersistentState<
-    Record<string, { developer: string; marketing: string; tools?: PRTools }>
-  >('notesByPR', {});
+  const [notesByPR, setNotesByPR] = usePersistentState<NotesState>('notesByPR', {});
  
 
   const fetchDiffs = async (page: number) => {
@@ -76,7 +76,7 @@ export default function Home() {
       const data: ApiResponse = await response.json();
 
       // Ensure we don't have duplicate PRs when appending
-      setDiffs((prevDiffs: DiffItem[]) => {
+      setDiffs(prevDiffs => {
         if (page === 1) return data.diffs;
         const existingIds = new Set(prevDiffs.map(d => d.id));
         const newDiffs = data.diffs.filter(d => !existingIds.has(d.id));
@@ -190,7 +190,7 @@ export default function Home() {
           if (streamDone) continue;
           
           if (type === 'tools' && tools) {
-            setNotesByPR((prev: Record<string, { developer: string; marketing: string; tools?: PRTools }>) => ({
+            setNotesByPR(prev => ({
               ...prev,
               [prId]: {
                 ...prev[prId],
@@ -202,7 +202,7 @@ export default function Home() {
           
           if (!section) continue;
 
-          setNotesByPR((prev: Record<string, { developer: string; marketing: string; tools?: PRTools }>) => {
+          setNotesByPR(prev => {
             const current = prev[prId] ?? { developer: "", marketing: "" };
           
             if (section === "developer") {
