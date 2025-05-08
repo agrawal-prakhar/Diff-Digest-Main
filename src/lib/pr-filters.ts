@@ -14,19 +14,22 @@ export interface DiffItem {
 }
 
 export const DEFAULT_FILTERS: PRFilter = {
-  minDiffSize: 10,
-  minCodeChanges: 3, // Minimum number of meaningful code changes
+  minDiffSize: 4,
+  minCodeChanges: 2,
   excludePatterns: [
-    'docs', 'typos', 'formatting', 'chore', 'style', 'lint',
-    'bump', 'update', 'deps', 'dependency', 'version'
+    'typos', 'formatting', 'style', 'lint',
+    'bump', 'update', 'deps', 'dependency', 'version',
+    'chore', 'docs', 'test', 'ci', 'build',
+    'minor', 'patch', 'trivial', 'cleanup'
   ],
   excludeLabels: [
     'documentation', 'chore', 'style', 'dependencies',
-    'maintenance', 'housekeeping'
+    'maintenance', 'housekeeping', 'tests', 'ci',
+    'build', 'minor', 'patch', 'trivial'
   ],
   includeLabels: [
-    'feature', 'enhancement', 'bugfix', 'fix', 'performance',
-    'security', 'refactor'
+    'feature', 'enhancement', 'bugfix', 'fix',
+    'performance', 'security', 'refactor', 'breaking', 'release'
   ]
 };
 
@@ -39,6 +42,16 @@ const isMeaningfulCodeChange = (line: string): boolean => {
   // Skip pure formatting changes (only whitespace differences)
   const strippedLine = line.replace(/\s+/g, '');
   if (strippedLine === '+' || strippedLine === '-') {
+    return false;
+  }
+
+  // Skip version number changes
+  if (line.match(/version|v\d+\.\d+\.\d+/i)) {
+    return false;
+  }
+
+  // Skip dependency updates
+  if (line.match(/dependencies|devDependencies|peerDependencies/i)) {
     return false;
   }
 
@@ -90,7 +103,5 @@ export const isRelevantPR = (pr: DiffItem, filter: PRFilter): boolean => {
 };
 
 export const filterPRs = (prs: DiffItem[], filter: PRFilter): DiffItem[] => {
-  return prs
-    .filter(pr => isRelevantPR(pr, filter))
-    .slice(0, 5); // Limit the number of PRs
+  return prs.filter(pr => isRelevantPR(pr, filter));
 }; 
